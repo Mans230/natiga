@@ -17,6 +17,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -45,7 +46,6 @@ WELCOME_TEXT = (
     "• أرسل <b>رقم الجلوس</b> (مثال: 2001970) للبحث المباشر.\n"
     "• أو أرسل <b>اسم الطالب</b> (كاملًا أو جزءًا منه) للبحث بالاسم.\n\n"
     "💡 يمكنك كتابة الأرقام بالعربية (٢٠٠١٩٧٠) أو الإنجليزية.\n"
-    "📄 وبعد ظهور النتيجة، اضغط زرار «عرض درجات المواد» لرؤية درجة كل مادة بالتفصيل.\n"
     "❓ للمساعدة في أي وقت أرسل /help"
 )
 
@@ -78,14 +78,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """أمر /help — شرح الاستخدام."""
     await update.message.reply_html(HELP_TEXT)
-
-
-def details_keyboard(seating_no) -> InlineKeyboardMarkup:
-    """زرار يفتح صفحة درجات المواد التفصيلية على موقع الوطن."""
-    url = f"https://natega.elwatannews.com/Result/1?seatNo={seating_no}"
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📄 عرض درجات المواد بالتفصيل", url=url)]]
-    )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -121,12 +113,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if detailed:
             await update.message.reply_html(format_subjects_result(detailed))
             return
-        # فشل الجلب → نكمل بالنتيجة المحلية + زرار التفاصيل
+        # فشل الجلب → نكمل بالنتيجة المحلية
 
+    # نتائج البحث بالاسم: كل نتيجة معها زرار يجلب درجاتها عند الضغط
     for _, row in shown.iterrows():
-        await update.message.reply_html(
-            format_result(row),
-            reply_markup=details_keyboard(row["seating_no"]),
+        keyboard = InlineKeyboardMarkup([[
+            InlineKeyboardButton(
+                "📚 عرض درجات المواد",
+                callback_data=f"grades:{row['seating_no']}",
+            )
+        ]])
+        await update.message.reply_html(format_result(row), reply_markup=keyboard)
+
+
+async def handle_grades_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """معالجة ضغط زرار «عرض درجات المواد» — يجلب الدرجات جوه الشات."""
+    query = update.callback_query
+    await query.answer("⏳ جارٍ جلب الدرجات...")
+
+    seating_no = (query.data or "").split(":", 1)[-1]
+    if not seating_no.isdigit():
+        return
+
+    detailed = await asyncio.to_thread(fetch_subjects, seating_no)
+    if detailed:
+        await query.message.reply_html(format_subjects_result(detailed))
+    else:
+        await query.message.reply_html(
+            "⚠️ تعذّر جلب درجات المواد حاليًا — حاول مرة أخرى بعد قليل."
         )
 
 
@@ -147,6 +161,7 @@ def main() -> None:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CallbackQueryHandler(handle_grades_callback, pattern=r"^grades:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("البوت يعمل الآن (long polling)...")
