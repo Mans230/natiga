@@ -12,8 +12,8 @@
 import logging
 import os
 
-from telegram import Update
-from telegram.constants import ChatAction, ParseMode
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -42,6 +42,7 @@ WELCOME_TEXT = (
     "• أرسل <b>رقم الجلوس</b> (مثال: 2001970) للبحث المباشر.\n"
     "• أو أرسل <b>اسم الطالب</b> (كاملًا أو جزءًا منه) للبحث بالاسم.\n\n"
     "💡 يمكنك كتابة الأرقام بالعربية (٢٠٠١٩٧٠) أو الإنجليزية.\n"
+    "📄 وبعد ظهور النتيجة، اضغط زرار «عرض درجات المواد» لرؤية درجة كل مادة بالتفصيل.\n"
     "❓ للمساعدة في أي وقت أرسل /help"
 )
 
@@ -76,6 +77,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_html(HELP_TEXT)
 
 
+def details_keyboard(seating_no) -> InlineKeyboardMarkup:
+    """زرار يفتح صفحة درجات المواد التفصيلية على موقع الوطن."""
+    url = f"https://natega.elwatannews.com/Result/1?seatNo={seating_no}"
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📄 عرض درجات المواد بالتفصيل", url=url)]]
+    )
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """معالجة أي نص يرسله المستخدم: بحث برقم الجلوس أو بالاسم."""
     query = (update.message.text or "").strip()
@@ -104,7 +113,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     for _, row in shown.iterrows():
         await update.message.reply_html(
-            format_result(row), parse_mode=ParseMode.HTML
+            format_result(row),
+            reply_markup=details_keyboard(row["seating_no"]),
         )
 
 

@@ -85,7 +85,9 @@ def load_data(path: str | None = None) -> pd.DataFrame:
             df = pd.read_excel(path)
         df["seating_no"] = pd.to_numeric(df["seating_no"], errors="coerce").astype("Int64")
         df["arabic_name"] = df["arabic_name"].astype(str).str.strip()
-        df["name_norm"] = df["arabic_name"].map(normalize_arabic)
+        # عمود البحث المُطبَّع: يُحسب فقط إن لم يكن جاهزًا في الملف
+        if "name_norm" not in df.columns:
+            df["name_norm"] = df["arabic_name"].map(normalize_arabic)
         _df = df
     return _df
 
