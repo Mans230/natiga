@@ -9,12 +9,11 @@
 يعتمد على python-telegram-bot v21+ (واجهة async) و long polling.
 """
 
-import asyncio
 import logging
 import os
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ChatAction
+from telegram import Update
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -22,8 +21,6 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
-from youm7 import fetch_subjects, format_subjects_result
 
 from search import (
     MAX_NAME_RESULTS,
@@ -45,7 +42,6 @@ WELCOME_TEXT = (
     "• أرسل <b>رقم الجلوس</b> (مثال: 2001970) للبحث المباشر.\n"
     "• أو أرسل <b>اسم الطالب</b> (كاملًا أو جزءًا منه) للبحث بالاسم.\n\n"
     "💡 يمكنك كتابة الأرقام بالعربية (٢٠٠١٩٧٠) أو الإنجليزية.\n"
-    "📄 وبعد ظهور النتيجة، اضغط زرار «عرض درجات المواد» لرؤية درجة كل مادة بالتفصيل.\n"
     "❓ للمساعدة في أي وقت أرسل /help"
 )
 
@@ -80,14 +76,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_html(HELP_TEXT)
 
 
-def details_keyboard(seating_no) -> InlineKeyboardMarkup:
-    """زرار يفتح صفحة درجات المواد التفصيلية على موقع الوطن."""
-    url = f"https://natega.elwatannews.com/Result/1?seatNo={seating_no}"
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton("📄 عرض درجات المواد بالتفصيل", url=url)]]
-    )
-
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """معالجة أي نص يرسله المستخدم: بحث برقم الجلوس أو بالاسم."""
     query = (update.message.text or "").strip()
@@ -114,19 +102,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if kind == "name":
         await update.message.reply_html(format_summary(len(results), len(shown)))
 
-    # بحث برقم الجلوس بنتيجة واحدة → محاولة جلب درجات المواد من اليوم السابع
-    if kind == "seating" and len(shown) == 1:
-        seating_no = shown.iloc[0]["seating_no"]
-        detailed = await asyncio.to_thread(fetch_subjects, seating_no)
-        if detailed:
-            await update.message.reply_html(format_subjects_result(detailed))
-            return
-        # فشل الجلب (حظر مؤقت/الموقع خارج الخدمة) → نكمل بالنتيجة المحلية
-
     for _, row in shown.iterrows():
         await update.message.reply_html(
-            format_result(row),
-            reply_markup=details_keyboard(row["seating_no"]),
+            format_result(row), parse_mode=ParseMode.HTML
         )
 
 
