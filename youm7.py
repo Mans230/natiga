@@ -16,8 +16,13 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-SITE_URL = "https://natega.youm7.com/"
-RESULT_URL = "https://natega.youm7.com/Result/1"
+# مصادر النتيجة — كلها نفس المنصة (POST /Result/1) وبدون حماية Cloudflare.
+# يتم تجربتها بالترتيب وأول نجاح يُستخدم.
+SOURCES = [
+    "https://natega.gomhuriaonline.com",
+    "https://natega.ahram.org.eg",
+    "https://natega.youm7.com",
+]
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -73,38 +78,41 @@ def parse_result_page(page_html: str) -> dict | None:
     return result if result["subjects"] else None
 
 
-def fetch_subjects(seating_no, system: str = "1", retries: int = 2) -> dict | None:
+def _fetch_from_source(base_url: str, seating_no, system: str) -> dict | None:
+    """محاولة جلب واحدة من مصدر معين."""
+    try:
+        session = requests.Session()
+        session.headers.update({"User-Agent": USER_AGENT})
+        # زيارة الصفحة الرئيسية أولًا (تهيئة الجلسة)
+        session.get(base_url + "/", timeout=TIMEOUT)
+        time.sleep(0.5)
+        resp = session.post(
+            f"{base_url}/Result/1",
+            data={"seating_no": str(seating_no), "system": system},
+            headers={"Referer": base_url + "/"},
+            timeout=TIMEOUT,
+        )
+        if resp.status_code == 200:
+            return parse_result_page(resp.text)
+        logger.warning("natega: %s رد بـ %s", base_url, resp.status_code)
+    except Exception:
+        logger.exception("natega: خطأ أثناء الجلب من %s", base_url)
+    return None
+
+
+def fetch_subjects(seating_no, system: str = "1") -> dict | None:
     """
-    جلب درجات المواد برقم الجلوس من موقع اليوم السابع.
-    system: "1" = نظام حديث، "2" = نظام قديم.
-    يعيد المحاولة تلقائيًا عند الفشل (الموقع يحظر مؤقتًا برد 404 عند كثرة الطلبات).
-    يرجع dict بالنتيجة، أو None عند فشل كل المحاولات.
+    جلب درجات المواد برقم الجلوس — يجرب المصادر بالترتيب:
+    الجمهورية ← الأهرام ← اليوم السابع، وأول نجاح يُرجع.
+    يرجع None فقط إذا فشلت كل المصادر (والبوت يكمل بالنتيجة المحلية).
     """
-    for attempt in range(retries + 1):
-        try:
-            session = requests.Session()
-            session.headers.update({"User-Agent": USER_AGENT})
-            # زيارة الصفحة الرئيسية أولًا (تهيئة الجلسة)
-            session.get(SITE_URL, timeout=TIMEOUT)
-            time.sleep(0.5)
-            resp = session.post(
-                RESULT_URL,
-                data={"seating_no": str(seating_no), "system": system},
-                headers={"Referer": SITE_URL},
-                timeout=TIMEOUT,
-            )
-            if resp.status_code == 200:
-                parsed = parse_result_page(resp.text)
-                if parsed:
-                    return parsed
-            logger.warning(
-                "youm7: محاولة %d فشلت (status %s) لرقم %s",
-                attempt + 1, resp.status_code, seating_no,
-            )
-        except Exception:
-            logger.exception("youm7: خطأ في محاولة %d لرقم %s", attempt + 1, seating_no)
-        if attempt < retries:
-            time.sleep(2)
+    for source in SOURCES:
+        result = _fetch_from_source(source, seating_no, system)
+        if result:
+            logger.info("natega: نجح الجلب من %s", source)
+            return result
+        time.sleep(1)
+    logger.warning("natega: فشلت كل المصادر لرقم %s", seating_no)
     return None
 
 
