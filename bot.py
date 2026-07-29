@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-بوت تليجرام لنتيجة الثانوية العامة (نظام حديث).
+بوت تليجرام لنتيجة الثانوية العامة 2026 (نظام حديث + نظام قديم).
+
+بحث تلقائي بالكامل: المستخدم يرسل رقم الجلوس أو الاسم، والبوت يبحث
+في النظامين تلقائيًا ويعرض النتيجة بدرجات المواد التفصيلية.
 
 التشغيل:
     export BOT_TOKEN="التوكن_من_BotFather"
@@ -27,11 +30,12 @@ from telegram.ext import (
 from youm7 import fetch_subjects, format_subjects_result
 
 from search import (
+    DATASETS,
     MAX_NAME_RESULTS,
     format_result,
     format_summary,
-    load_data,
-    search,
+    load_all,
+    search_auto,
 )
 
 logging.basicConfig(
@@ -41,24 +45,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 WELCOME_TEXT = (
-    "👋 أهلًا بك في <b>بوت نتيجة الثانوية العامة (نظام حديث)</b>\n\n"
+    "👋 أهلًا بك في <b>بوت نتيجة الثانوية العامة 2026</b>\n\n"
     "🔍 <b>طريقة الاستخدام:</b>\n"
     "• أرسل <b>رقم الجلوس</b> (مثال: 2001970) للبحث المباشر.\n"
     "• أو أرسل <b>اسم الطالب</b> (كاملًا أو جزءًا منه) للبحث بالاسم.\n\n"
     "💡 يمكنك كتابة الأرقام بالعربية (٢٠٠١٩٧٠) أو الإنجليزية.\n"
+    "✍️ ومش لازم تدقق في الحروف — البحث بيتجاهل تلقائيًا:\n"
+    "الهمزات (أ / إ / آ / ا) والتاء المربوطة (ة / ه) "
+    "والألف المقصورة (ى / ي)، يعني «أحمد» زي «احمد» بالظبط.\n\n"
     "❓ للمساعدة في أي وقت أرسل /help"
 )
 
 HELP_TEXT = (
     "❓ <b>مساعدة</b>\n\n"
-    "هذا البوت يتيح لك معرفة نتيجة الثانوية العامة (نظام حديث):\n\n"
+    "هذا البوت يتيح لك معرفة نتيجة الثانوية العامة 2026 "
+    "(نظام حديث ونظام قديم):\n\n"
     "1️⃣ <b>البحث برقم الجلوس:</b>\n"
-    "اكتب رقم الجلوس فقط — مثال: <code>2001970</code>\n\n"
+    "اكتب رقم الجلوس فقط — مثال: <code>2001970</code>\n"
+    "وستظهر النتيجة بدرجات كل مادة بالتفصيل.\n\n"
     "2️⃣ <b>البحث بالاسم:</b>\n"
     "اكتب الاسم أو جزءًا منه — مثال: <code>احمد محمود السيد</code>\n"
-    "وستظهر لك كل الأسماء المطابقة (حتى 20 نتيجة).\n\n"
-    "📌 لا يهم اختلاف الهمزات (أ/إ/آ) أو التاء المربوطة/المروية (ة/ه) "
-    "أو الألف المقصورة (ى/ي) — البحث يتعامل معها تلقائيًا."
+    "وستظهر لك كل الأسماء المطابقة (حتى 20 نتيجة)، واضغط "
+    "«📚 عرض درجات المواد» تحت أي نتيجة لعرض درجاتها.\n\n"
+    "📌 لا يهم اختلاف الهمزات (أ/إ/آ) أو التاء المربوطة (ة/ه) "
+    "أو الألف المقصورة (ى/ي) — البحث يتعامل معها تلقائيًا.\n\n"
+    "🆘 <b>للدعم أو الاستفسار:</b> @hostrdp"
 )
 
 NO_RESULTS_TEXT = (
@@ -81,7 +92,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """معالجة أي نص يرسله المستخدم: بحث برقم الجلوس أو بالاسم."""
+    """معالجة أي نص يرسله المستخدم: بحث تلقائي برقم الجلوس أو بالاسم."""
     query = (update.message.text or "").strip()
     if not query:
         return
@@ -89,7 +100,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.chat.send_action(ChatAction.TYPING)
 
     try:
-        results, kind = search(query)
+        pairs, kind = search_auto(query)
     except Exception:
         logger.exception("خطأ أثناء البحث عن: %s", query)
         await update.message.reply_html(
@@ -97,45 +108,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
-    if results.empty:
+    if not pairs:
         await update.message.reply_html(NO_RESULTS_TEXT)
         return
 
-    shown = results.head(MAX_NAME_RESULTS)
+    shown = pairs[:MAX_NAME_RESULTS]
 
     if kind == "name":
-        await update.message.reply_html(format_summary(len(results), len(shown)))
+        await update.message.reply_html(format_summary(len(pairs), len(shown)))
 
-    # بحث برقم الجلوس بنتيجة واحدة → جلب درجات المواد من مصادر النتيجة
+    # بحث برقم الجلوس بنتيجة واحدة → جلب درجات المواد التفصيلية
     if kind == "seating" and len(shown) == 1:
-        seating_no = shown.iloc[0]["seating_no"]
-        detailed = await asyncio.to_thread(fetch_subjects, seating_no)
-        if detailed:
-            await update.message.reply_html(format_subjects_result(detailed))
-            return
+        row, ds = shown[0]
+        system = DATASETS[ds]["system"]
+        if system:
+            detailed = await asyncio.to_thread(fetch_subjects, row["seating_no"], system)
+            if detailed:
+                await update.message.reply_html(format_subjects_result(detailed))
+                return
         # فشل الجلب → نكمل بالنتيجة المحلية
 
-    # نتائج البحث بالاسم: كل نتيجة معها زرار يجلب درجاتها عند الضغط
-    for _, row in shown.iterrows():
+    # عرض النتائج المحلية + زرار الدرجات تحت كل نتيجة
+    for row, ds in shown:
         keyboard = InlineKeyboardMarkup([[
             InlineKeyboardButton(
                 "📚 عرض درجات المواد",
-                callback_data=f"grades:{row['seating_no']}",
+                callback_data=f"grades:{ds}:{row['seating_no']}",
             )
         ]])
-        await update.message.reply_html(format_result(row), reply_markup=keyboard)
+        await update.message.reply_html(
+            format_result(row, ds), reply_markup=keyboard
+        )
 
 
 async def handle_grades_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """معالجة ضغط زرار «عرض درجات المواد» — يجلب الدرجات جوه الشات."""
     query = update.callback_query
-    await query.answer("⏳ جارٍ جلب الدرجات...")
+    parts = (query.data or "").split(":")
+    if len(parts) != 3:
+        await query.answer("⚠️ طلب غير صالح")
+        return
+    _, ds, seating_no = parts
 
-    seating_no = (query.data or "").split(":", 1)[-1]
-    if not seating_no.isdigit():
+    system = DATASETS.get(ds, {}).get("system")
+    if not system:
+        await query.answer("⚠️ طلب غير صالح")
         return
 
-    detailed = await asyncio.to_thread(fetch_subjects, seating_no)
+    await query.answer("⏳ جارٍ جلب الدرجات...")
+    detailed = await asyncio.to_thread(fetch_subjects, seating_no, system)
     if detailed:
         await query.message.reply_html(format_subjects_result(detailed))
     else:
@@ -155,8 +176,8 @@ def main() -> None:
         )
 
     logger.info("جارٍ تحميل بيانات النتائج (قد يستغرق دقيقة)...")
-    df = load_data()
-    logger.info("تم تحميل %d صفًا بنجاح.", len(df))
+    load_all()
+    logger.info("تم تحميل النتائج بنجاح.")
 
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
