@@ -119,10 +119,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         seating_no = shown.iloc[0]["seating_no"]
         detailed = await asyncio.to_thread(fetch_subjects, seating_no)
         if detailed:
-            await update.message.reply_html(
-                format_subjects_result(detailed),
-                reply_markup=details_keyboard(seating_no),
-            )
+            await update.message.reply_html(format_subjects_result(detailed))
             return
         # فشل الجلب (حظر مؤقت/الموقع خارج الخدمة) → نكمل بالنتيجة المحلية
 
